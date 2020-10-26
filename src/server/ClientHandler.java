@@ -1,12 +1,15 @@
 package server;
 
-import javax.crypto.spec.PSource;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 
 public class ClientHandler {
+
+    public static int TIME_OUT_TIME=5000;
 
     DataInputStream in;
     DataOutputStream out;
@@ -32,9 +35,24 @@ public class ClientHandler {
 
             new Thread(() -> {
                 try {
+                    socket.setSoTimeout(TIME_OUT_TIME);
                     //цикл аутентификации
                     while (true) {
                         String str = in.readUTF();
+
+                        if (str.startsWith("/reg ")) {
+                            String[] token = str.split("\\s");
+                            if (token.length < 4) {
+                                continue;
+                            }
+                            boolean b = server.getAuthService().registration(
+                                    token[1], token[2], token[3]);
+                            if(b) {
+                                sendMsg("/regok");
+                            } else {
+                                sendMsg("/regno");
+                            }
+                        }
 
                         if (str.startsWith("/auth ")) {
                             String[] token = str.split("\\s");
@@ -44,11 +62,18 @@ public class ClientHandler {
                             String newNick = server.getAuthService().
                                     getNicknameByLoginAndPassword(token[1], token[2]);
                             if (newNick != null) {
-                                nickname = newNick;
-                                server.subscribe(this);
-                                System.out.println("Прошли подключение");
-                                sendMsg("/authok " + newNick);
-                                break;
+                                login = token[1];
+                                if (!server.isLoginAuthenticated(login)) {
+                                    nickname = newNick;
+                                    sendMsg("/authok " + newNick);
+                                    server.subscribe(this);
+                                    System.out.println("Прошли подключение");
+                                    socket.setSoTimeout(0);
+                                    System.out.println("Обнулили ожидание");
+                                    break;
+                                } else {
+                                    sendMsg("С этими логином уже вошли в чат");
+                                }
                             } else {
                                 sendMsg("Неверная пара логин/пароль");
                             }
@@ -68,22 +93,22 @@ public class ClientHandler {
 
                         if (str.startsWith("/w ")) {
                             System.out.println("Зашли");
-                            String[] receiver = str.split(" ");
+                            String[] receiver = str.split(" ", 3);
                             if (receiver.length > 2) {
-                                str = "";
-                                for (int i = 2; i < receiver.length; i++) {
-                                    str += receiver[i];
-                                    str += " ";
-                                }
                                 System.out.println(str);
-                                System.out.println("Кому шлем: "+ receiver[1]);
-                                server.sendMsgToReceiver(this, receiver[1], str.trim());
+                                System.out.println("Кому шлем: " + receiver[1]);
+                                server.sendMsgToReceiver(this, receiver[1], receiver[2].trim());
                                 continue;
                             }
                         }
                         server.broadcastMsg(this, str);
                     }
-                } catch (IOException e) {
+                }
+                catch (SocketTimeoutException e) {
+                    System.out.println("Время ожидания подключения истекло");
+                    sendMsg("/end");
+                }
+                catch (IOException e) {
                     e.printStackTrace();
                 } finally {
                     server.unsubscribe(this);
@@ -110,5 +135,9 @@ public class ClientHandler {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    public String getLogin() {
+        return login;
     }
 }
